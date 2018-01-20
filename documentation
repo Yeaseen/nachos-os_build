@@ -1,0 +1,12 @@
+
+firstly plz read nachos.ps file :)
+
+
+After Creating any .h .cc , firslty add .h .cc .o in the code/MakefileCommon 
+
+then make 
+
+go to code/thred directory 
+
+then run:   /nachos threadtest
+
