@@ -1,0 +1,14 @@
+Install on a 64-bit Ubuntu
+
+Nachos requires 32-bit headers and libraries. To install these on a Ubuntu 14.4 LTS 64-bit:
+
+$ sudo apt-get install gcc-multilib g++-multilib lib32stdc++6
+
+
+
+
+then make
+
+run from code directory: ./userprog/nachos -x test/array
+
+run from userprog directory: ./nachos -x ../test/array
