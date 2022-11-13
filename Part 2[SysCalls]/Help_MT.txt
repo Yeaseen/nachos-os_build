@@ -1,0 +1,184 @@
+
+The first step in the multiprogramming project is modifying the
+AddrSpace class to support having multiple processes loaded into
+memory at the same time.  So let's start by looking at what the
+AddrSpace class does already and go from there.
+
+The AddrSpace constructor currently performs the following steps:
+
+1) Look in the executable header to figure out how large of an address
+space needs to be created for this process.
+
+2) Create a page table for as many pages are necessary to load the
+program into the address space.  The page table is represented as an
+array of TranslationEntries (PTEs) indexed by virtual page number.  A
+physical page is allocated for each virtual page.
+
+NOTE: This is the only interaction you need to have with
+TranslationEntries and the TLB.  Once you get the AddrSpace created
+and initialized, the MIPS machine simulator will use the page table to
+do all translations.  In other words, don't worry about TLB misses,
+etc., the MIPS simulator will take care of it.
+
+3) Zero out the pages allocated for the address space.
+
+4) Load the code and page sections from the executable file for the
+program into the pages allocated for the address space.
+
+Now let's see what needs to be changed to support multiprogramming:
+
+-- Executable Header
+
+Nothing needs to be changed here.
+
+-- Creating Page Table
+
+Right now, the page table just grabs physical pages.  So we need to
+change it to ask a MemoryManager to allocate physical pages for it.
+The MemoryManager will keep track of which physical pages are free
+and which are allocated (see below).  The loop in AddrSpace looks
+something like:
+
+for () {
+  pageTable[i].virtualPage = i;  // this sets the virtual page #
+  pageTable[i].physicalPage = i; // this just grabs a physical page
+  // initialize flags..
+}
+
+and we want to change it to use the Memory Manager to allocate
+physical pages:
+
+for () {
+  pageTable[i].virtualPage = i;  // this sets the virtual page #
+  pageTable[i].physicalPage = MemoryManager->AllocPage() // (also see below)
+  // initialize flags as before, no need to make changes
+}
+
+At this point, virtual page "i" maps to the physical page returned by
+the MemoryManager.
+
+-- Zeroing Out The Address Space
+
+Right now, AddrSpace zeroes out the address space by writing null
+bytes directly into physical memory without regard to the mapping of
+virtual to physical pages (using the machine->mainMemory variable
+directly; see the Q&A below).  With multiprogramming, you can no
+longer do it this way.  Instead, you need to (1) loop through each
+virtual page and (2) zero out that page.
+
+for (each virtual page) {
+   get a pointer to the physical page by mapping the virtual page
+   to the physical page; (see Q&A below)
+   zero the physical page using the pointer to it;
+}
+
+-- Loading Code and Data into the Address Space
+
+As with zeroing out the address space, the original version of
+AddrSpace loads the code and data directly into physical memory
+without regard to page boundaries or page mappings.  You need to
+change this so that it pays attention to page boundaries and page
+mappings.  So instead of being able to do it in one call, you will
+have to do it one page at a time.  In other words, you will read from
+the executable file a page a time, and write what you read into the
+pages of the address space.
+
+
+In more detail, what we're doing is reading code and data from the
+executable file into the address space for this process.  The offset
+to the code in the executable file is specified by the
+"noffH.code.inFileAddr" field of the executable header.  The size of
+the code (number of bytes) is specified by "noffH.code.size".  And the
+code is supposed to be loaded at virtual address
+"noffH.code.virtualAddr".
+
+Since the code and data is specified to be loaded at a virtual
+address, you need to translate the virtual address into a physical
+address (a pointer inside machine->mainMemory) before you can do this.
+
+For example, let's say you want to read the third code page from the
+executable file into the process' address space.  The executable file
+offset for the third code page is "noffH.code.inFileAddr + (2 *
+PageSize)" (i.e., the first code page has offset zero).  And this
+needs to get loaded at virtual address "noffH.code.virtualAddr + (2 *
+PageSize)".  And the amount of data that we'll read from the
+executable file is "PageSize".  Before we can actually call ReadAt to
+do the read, though, we need to convert the virtual address into a
+physical address (into a pointer into machine->mainMemory; see the Q&A
+below).
+
+You need to do this for every page of code and every page of data in
+the executable file.  A psuedo-code loop for doing this is:
+
+while (still code (or data) in executable file) {
+  file_off = determine current offset into executable file;
+  virt_addr = determine the virtual address that the code gets loaded at;
+  phys_addr = convert the virt_addr to a physical address (a pointer
+              into machine->mainMemory) using your page table;
+  size = PageSize;
+  executable->ReadAt(phys_addr, size, file_off) 
+}
+
+NOTE: The virtual addresses where the code and data get loaded (e.g.,
+noffH.code.virtualAddr) do not necessarily fall on page boundaries,
+and that the size of the code and data is not necessarily a multiple
+of a page.  This will make your implementation a little messier than
+the loop above.  One way to address this problem is to load a
+section in three phases: (1) if the section start address is not on a
+page boundary, load the first fragment of the section until you reach
+a page boundary; (2) load whole pages of the section; (3) if the end
+of the segment is not a full page, load the remaining fragment.
+
+As a result, your code will look like:
+
+if necessary, load the first fragment until you reach a page boundary
+while (...) {
+  read in page-size chunks
+}
+if necessary, load the last fragment if it's not a full page
+
+NOTE: You should explicitly check that programs being loaded have
+valid code and data sections before trying to read from the file into
+memory (e.g., not all programs will have a data section).  You can do
+so simply by checking whether the code and data sections have a
+positive section size.
+
+* Handling Errors
+
+Note that it is possible to run out of physical memory in project 2,
+in which case you will want to return an error.  As described in the
+project description, you will want to move most of the code in the
+AddrSpace constructor into a new method so that you can return error
+values.
+
+* Memory Manager
+
+The role of the Memory Manager is to keep track of allocated and free
+physical memory pages.  You can use any data structure you want to
+implement this.  
+
+Where should you declare and initialize your Memory Manager?  One way
+to do this is to declare a global pointer to a Memory Manager instance
+and initialize this pointer in StartProcess by instantiating an
+instance of MemoryManager (since StartProcess only runs once, and runs
+before any processes start).
+
+* Q&A
+
+Q: How is physical memory represented?
+
+Physical memory is modeled using an array of bytes referenced using
+the "machine->mainMemory" variable.  You should think of
+machine->mainMemory as being partitioned into "physical pages".  There
+are "NumPhysPages" of such pages, and each page has size "PageSize"
+(both of these are defined in machine.h).  Hence, the size of
+machine->mainMemory is "NumPhysPages * PageSize".
+
+Q: How do I reference a page in "physical memory"?
+
+Pages in physical memory are referenced using offsets into the
+"machine->mainMemory" array.  For example, let's say you want to
+reference page 3 (the fourth page since page numbers start at 0).
+Page 3 has a "physical address" of "3 * PageSize", and therefore
+begins at machine->mainMemory[3 * PageSize].  To get a pointer to Page
+3, you would take its address: &machine->mainMemory[3 * PageSize].
